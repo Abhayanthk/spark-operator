@@ -12,7 +12,7 @@ AI agents should:
 
 - Make atomic, minimal, and reversible changes.
 - Run the same `make` targets CI runs (see [Commands](#commands)) before proposing commits.
-- NEVER modify configuration, CI/CD, or release automation unless explicitly requested.
+- NEVER modify CI/CD workflows (`.github/`) or release automation unless explicitly requested.
 - Use `AGENTS.md` and `Makefile` as the source of truth for development commands.
 
 Agents must NOT:
@@ -79,8 +79,6 @@ Tools are downloaded on demand into `bin/` by the `make` targets.
 
 ## Commands
 
-<!-- BEGIN: AGENT_COMMANDS -->
-
 ### Build
 
 ```bash
@@ -96,7 +94,8 @@ make helm-unittest            # Helm chart unit tests
 make e2e-test                 # End-to-end tests on a Kind cluster
 make e2e-test DEPLOY_METHOD=kustomize   # e2e with the Kustomize install (CI runs helm and kustomize)
 
-# Targeted tests
+# Targeted tests (envtest binaries must be downloaded first)
+make setup-envtest
 go test ./internal/controller/sparkapplication/...
 ```
 
@@ -105,7 +104,7 @@ go test ./internal/controller/sparkapplication/...
 ```bash
 make go-fmt                   # go fmt (root and test/e2e)
 make go-vet                   # go vet (root and test/e2e)
-make go-lint                  # golangci-lint
+make go-lint                  # golangci-lint (root and test/e2e)
 go mod tidy && go -C test/e2e mod tidy
 ```
 
@@ -116,8 +115,11 @@ make manifests                # Regenerate CRD, RBAC and webhook manifests into 
 make generate                 # Regenerate deepcopy code and Python API models
 make update-crd               # Copy regenerated CRDs into the Helm chart
 make build-api-docs           # Regenerate docs/api-docs.md
-make verify-codegen           # Verify generated clients are up to date
+make verify-codegen           # Regenerate pkg/client (hack/update-codegen.sh) and verify it is up to date
+make detect-crds-drift        # Check Helm chart CRDs match config/crd/bases
 ```
+
+`make generate` runs `openapi-generator-cli` in a container (`CONTAINER_TOOL`, default `docker`), so it needs a container runtime.
 
 ### Helm chart
 
@@ -127,7 +129,14 @@ make helm-docs                # Regenerate chart README.md from README.md.gotmpl
 make drift-check              # Detect drift between Helm chart and Kustomize manifests
 ```
 
-<!-- END: AGENT_COMMANDS -->
+### Other CI checks
+
+```bash
+make shell-fmt                # Format shell scripts (CI fails on diff)
+make shell-lint               # shellcheck
+make kustomize-lint           # Validate Kustomize build output
+make docs-test                # Build the docs website strictly (warnings are errors)
+```
 
 ## Generated Files
 
@@ -137,12 +146,14 @@ Never edit these by hand; change the source and regenerate:
 | --- | --- | --- |
 | `config/crd/bases/*.yaml` | Go types in `api/` | `make manifests` |
 | `charts/spark-operator-chart/crds/*.yaml` | `config/crd/bases/` | `make update-crd` |
-| `api/**/zz_generated.*.go` | Go types in `api/` | `make generate` |
+| `api/**/zz_generated.deepcopy.go` | Go types in `api/` | `make generate` |
+| `api/**/zz_generated.openapi.go`, `api/openapi-spec/swagger.json` | Go types in `api/` | `make generate` (via `hack/openapi/gen-openapi.sh`) |
 | `api/python_api/` | CRDs | `make generate` |
+| `pkg/client/**` | Go types in `api/` | `hack/update-codegen.sh` (checked by `make verify-codegen`) |
 | `docs/api-docs.md` | Go types in `api/` | `make build-api-docs` |
 | `charts/spark-operator-chart/README.md` | `README.md.gotmpl`, `values.yaml` | `make helm-docs` |
 
-CI regenerates each of these and fails if the result differs from what is committed.
+CI regenerates these files (or, for the chart CRDs, diffs them with `make detect-crds-drift`) and fails if the result differs from what is committed.
 
 ## Development Workflow for AI Agents
 
@@ -151,13 +162,14 @@ CI regenerates each of these and fails if the result differs from what is commit
 1. Read existing code patterns, comments, and tests for alignment
 2. Check which generated files your change affects (see [Generated Files](#generated-files))
 
-**Before proposing changes**, run the same checks as CI (`.github/workflows/integration.yaml`):
+**Before proposing changes**, run the same checks as CI (`.github/workflows/`):
 
 1. `make go-fmt go-vet go-lint`
 2. `go mod tidy && go -C test/e2e mod tidy`
-3. `make generate manifests update-crd` if `api/` changed
+3. If `api/` changed: `make generate update-crd build-api-docs verify-codegen detect-crds-drift`
 4. `make unit-test`
-5. `make helm-unittest` if the chart changed
+5. If the Helm chart changed: `make helm-unittest helm-docs`
+6. If shell scripts, `config/`, or `docs/website/` changed: `make shell-fmt shell-lint`, `make kustomize-lint drift-check`, or `make docs-test`
 
 **Commit/PR hygiene**:
 
