@@ -115,7 +115,8 @@ make manifests                # Regenerate CRD, RBAC and webhook manifests into 
 make generate                 # Regenerate deepcopy code and Python API models
 make update-crd               # Copy regenerated CRDs into the Helm chart
 make build-api-docs           # Regenerate docs/api-docs.md
-make verify-codegen           # Regenerate pkg/client (hack/update-codegen.sh) and verify it is up to date
+./hack/update-codegen.sh      # Regenerate pkg/client (clientset, listers, informers)
+make verify-codegen           # Check pkg/client is up to date
 make detect-crds-drift        # Check Helm chart CRDs match config/crd/bases
 ```
 
